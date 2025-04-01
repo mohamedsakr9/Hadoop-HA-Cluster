@@ -1,0 +1,18 @@
+<configuration>
+    <property>
+        <name>fs.defaultFS</name>
+        <value>hdfs://sakrcluster</value>
+    </property>
+    <property>
+        <name>dfs.journalnode.edits.dir</name>
+        <value>/Data/hadoop-3.3.6/data/jn</value>
+    </property>
+    <property>
+        <name>ha.zookeeper.quorum</name>
+        <value>m1:2181,m2:2181,m3:2181</value>
+    </property>
+    <property>
+        <name>hadoop.tmp.dir</name>
+        <value>/Data/hadoop-3.3.6/tmp</value>
+    </property>
+</configuration>
