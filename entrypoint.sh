@@ -2,7 +2,7 @@
 
 echo "$(date) Sourcing environment variables..."
 # Manually set environment variables to avoid sourcing issues
-export HADOOP_HOME=/Data/hadoop-3.3.6
+export HADOOP_HOME=/home/huser/Data/hadoop-3.3.6
 export HADOOP_MAPRED_HOME=$HADOOP_HOME
 export HADOOP_COMMON_HOME=$HADOOP_HOME
 export HADOOP_HDFS_HOME=$HADOOP_HOME
@@ -10,17 +10,18 @@ export YARN_HOME=$HADOOP_HOME
 export HADOOP_CONF_DIR=$HADOOP_HOME/etc/hadoop
 export YARN_CONF_DIR=$HADOOP_HOME/etc/hadoop
 export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
-export ZOOKEEPER_HOME=/zookeeper-3.5.9
+export ZOOKEEPER_HOME=/home/huser/zookeeper-3.5.9
 export PATH=$PATH:$JAVA_HOME/bin:$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$ZOOKEEPER_HOME/bin
 
-NAMENODE_DIR=/Data/hadoop-3.3.6/namenode
-DATANODE_DIR=/Data/hadoop-3.3.6/datanode
-ZK_DIR=/Data/zookeeper
+NAMENODE_DIR=/home/huser/Data/hadoop-3.3.6/namenode
+DATANODE_DIR=/home/huser/Data/hadoop-3.3.6/datanode
+ZK_DIR=/home/huser/Data/zookeeper
 
 echo "$(date) Starting SSH service..."
 service ssh start
 
 # Set up ZooKeeper myid
+su - huser
 echo "$(date) Configuring ZooKeeper myid and logs..."
 mkdir -p $ZK_DIR/logs
 
@@ -44,18 +45,10 @@ case "$(hostname)" in
         ;;
 esac
 
-# Set permissions for ZooKeeper
-chown -R huser:hadoop $ZK_DIR
-chmod 755 $ZK_DIR
 
-# Fix ownership of HDFS directories
-chown -R huser:hadoop /Data/hadoop-3.3.6/data
-chown -R huser:hadoop /Data/hadoop-3.3.6/logs
-chown -R huser:hadoop $NAMENODE_DIR
 
 # Create DataNode directory with correct permissions
 mkdir -p $DATANODE_DIR
-chown -R huser:hadoop $DATANODE_DIR
 
 # Run all services as the huser user
 exec gosu huser bash -c "
@@ -69,6 +62,7 @@ if [[ \"\$(hostname)\" =~ ^w.* ]]; then
     yarn --daemon start nodemanager
     
     echo \"\$(date) Worker node services started successfully! Monitoring logs...\"
+    su huser
     tail -f /dev/null
     exit 0
 fi
@@ -76,7 +70,7 @@ fi
 # For master nodes (continuing with existing script)
 echo \"\$(date) Starting JournalNode on \$(hostname)...\"
 hdfs --daemon start journalnode
-
+su huser
 # Format NameNode and ZooKeeper Failover Controller (ZKFC) only if needed
 if [ \"\$(hostname)\" == \"m1\" ]; then
     # Format NameNode if not formatted
