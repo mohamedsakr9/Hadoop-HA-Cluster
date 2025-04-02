@@ -23,10 +23,6 @@ mkdir -p $NAMENODE_DIR
 mkdir -p $DATANODE_DIR
 mkdir -p $ZK_DIR/logs
 
-# Fix ownership of directories
-chown -R huser:hadoop /home/huser/Data
-chown -R huser:hadoop $ZOOKEEPER_HOME
-
 echo "$(date) Starting SSH service..."
 # Create /run/sshd directory if it doesn't exist
 mkdir -p /run/sshd
