@@ -17,14 +17,24 @@ NAMENODE_DIR=/home/huser/Data/hadoop-3.3.6/namenode
 DATANODE_DIR=/home/huser/Data/hadoop-3.3.6/datanode
 ZK_DIR=/home/huser/Data/zookeeper
 
-echo "$(date) Starting SSH service..."
-service ssh start
-
-# Set up ZooKeeper myid
-su - huser
-echo "$(date) Configuring ZooKeeper myid and logs..."
+# Make sure necessary directories exist
+mkdir -p $ZK_DIR
+mkdir -p $NAMENODE_DIR
+mkdir -p $DATANODE_DIR
 mkdir -p $ZK_DIR/logs
 
+# Fix ownership of directories
+chown -R huser:hadoop /home/huser/Data
+chown -R huser:hadoop $ZOOKEEPER_HOME
+
+echo "$(date) Starting SSH service..."
+# Create /run/sshd directory if it doesn't exist
+mkdir -p /run/sshd
+# Start SSH service
+/usr/sbin/sshd
+
+echo "$(date) Configuring ZooKeeper myid..."
+# Set up ZooKeeper myid based on hostname
 case "$(hostname)" in
     "m1")
         echo "1" > $ZK_DIR/myid
@@ -36,42 +46,54 @@ case "$(hostname)" in
         echo "3" > $ZK_DIR/myid
         ;;
     "w"*)
-        # For worker nodes, set myid based on NODE_ID
-        echo "$NODE_ID" > $ZK_DIR/myid
-        echo "Setting worker node ZK ID to $NODE_ID"
+        # For worker nodes, set myid based on NODE_ID or default to hostname number
+        NODE_NUM=$(echo "$(hostname)" | sed 's/w//')
+        ID=${NODE_ID:-$NODE_NUM}
+        echo "$ID" > $ZK_DIR/myid
+        echo "Setting worker node ZK ID to $ID"
         ;;
     *)
-        echo "Unknown host. Skipping myid setup."
+        echo "Unknown host. Using default myid=1"
+        echo "1" > $ZK_DIR/myid
         ;;
 esac
 
-
-
-# Create DataNode directory with correct permissions
-mkdir -p $DATANODE_DIR
+# Make sure myid has correct ownership
+chown huser:hadoop $ZK_DIR/myid
 
 # Run all services as the huser user
+echo "$(date) Switching to huser user to run services..."
 exec gosu huser bash -c "
+echo \"Running as \$(whoami) on \$(hostname)\"
 
 # For worker nodes (hostname starts with 'w')
 if [[ \"\$(hostname)\" =~ ^w.* ]]; then
-    
     echo \"\$(date) Starting DataNode on worker node \$(hostname)...\"
     hdfs --daemon start datanode
+    
     echo \"\$(date) Starting NodeManager on worker node \$(hostname)...\"
     yarn --daemon start nodemanager
     
     echo \"\$(date) Worker node services started successfully! Monitoring logs...\"
-    su huser
     tail -f /dev/null
     exit 0
 fi
 
-# For master nodes (continuing with existing script)
+# For master nodes
 echo \"\$(date) Starting JournalNode on \$(hostname)...\"
 hdfs --daemon start journalnode
-su huser
-# Format NameNode and ZooKeeper Failover Controller (ZKFC) only if needed
+
+# Give JournalNode time to start
+sleep 3
+
+# Start ZooKeeper on all master nodes
+echo \"\$(date) Starting ZooKeeper on \$(hostname)...\"
+$ZOOKEEPER_HOME/bin/zkServer.sh start
+
+# Give ZooKeeper time to start
+sleep 5
+
+# Master node 1 (m1) specific operations
 if [ \"\$(hostname)\" == \"m1\" ]; then
     # Format NameNode if not formatted
     if [ ! -d \"$NAMENODE_DIR/current\" ]; then
@@ -80,74 +102,27 @@ if [ \"\$(hostname)\" == \"m1\" ]; then
     else
         echo \"\$(date) NameNode is already formatted. Skipping formatting...\"
     fi
-
-    # Start NameNode and ZooKeeper
-    echo \"\$(date) Starting ZooKeeper on m1...\"
-    zkServer.sh start
     
     echo \"\$(date) Starting NameNode on m1...\"
     hdfs --daemon start namenode
-
-    # Format ZKFC if not formatted - using the specified ZooKeeper check
-    if echo \"ls /hadoop-ha\" | zkCli.sh -server m1:2181 | grep -q sakrcluster; then
+    
+    # Wait for NameNode to start
+    sleep 5
+    
+    # Format ZKFC if not formatted
+    echo \"\$(date) Attempting to check if ZKFC is already formatted...\"
+    if $ZOOKEEPER_HOME/bin/zkCli.sh -server localhost:2181 ls /hadoop-ha 2>&1 | grep -q 'sakrcluster'; then
         echo \"\$(date) ZKFC is already formatted. Skipping formatting...\"
     else
-        echo \"\$(date) Formatting Zookeeper Failover Controller (ZKFC) as it hasn't been formatted yet...\"
+        echo \"\$(date) Formatting Zookeeper Failover Controller (ZKFC)...\"
         hdfs zkfc -formatZK -force
     fi
-
+    
     echo \"\$(date) Starting ZKFC on m1...\"
     hdfs --daemon start zkfc
     
-    # Create YARN HA ZooKeeper paths if they don't exist
+    # Create YARN HA ZooKeeper paths
     echo \"\$(date) Setting up YARN HA ZooKeeper paths...\"
     
-    # Check if /rmstore exists
-    if echo \"ls /rmstore\" | zkCli.sh -server m1:2181 2>&1 | grep -q \"Node does not exist\"; then
-        echo \"\$(date) Creating /rmstore ZooKeeper path for YARN HA...\"
-        echo \"create /rmstore\" | zkCli.sh -server m1:2181
-    else
-        echo \"\$(date) /rmstore ZooKeeper path already exists\"
-    fi
-    
-    # Check if /yarn-leader-election exists
-    if echo \"ls /yarn-leader-election\" | zkCli.sh -server m1:2181 2>&1 | grep -q \"Node does not exist\"; then
-        echo \"\$(date) Creating /yarn-leader-election ZooKeeper path for YARN HA...\"
-        echo \"create /yarn-leader-election\" | zkCli.sh -server m1:2181
-    else
-        echo \"\$(date) /yarn-leader-election ZooKeeper path already exists\"
-    fi
-
-elif [ \"\$(hostname)\" == \"m2\" ] || [ \"\$(hostname)\" == \"m3\" ]; then
-    # Start ZooKeeper first on all nodes
-    echo \"\$(date) Starting ZooKeeper on \$(hostname)...\"
-    zkServer.sh start
-    
-    # Wait for ZooKeeper to fully start
-    sleep 5
-    
-    # Bootstrap Standby for m2 and m3
-    if [ ! -d \"$NAMENODE_DIR/current\" ]; then
-        echo \"\$(date) Bootstrapping Standby on \$(hostname)...\"
-        hdfs namenode -bootstrapStandby
-    else
-        echo \"\$(date) Standby NameNode already bootstrapped. Skipping...\"
-    fi
-
-    echo \"\$(date) Starting NameNode on \$(hostname)...\"
-    hdfs --daemon start namenode
-
-    echo \"\$(date) Starting ZKFC on \$(hostname)...\"
-    hdfs --daemon start zkfc
-fi
-
-# Wait for HDFS services to fully start
-sleep 5
-
-# Start ResourceManager after ZooKeeper paths are set up
-echo \"\$(date) Starting ResourceManager on \$(hostname)...\"
-yarn --daemon start resourcemanager
-
-echo \"\$(date) All services started successfully! Monitoring logs...\"
-tail -f /dev/null
-"
+    # Try to create /rmstore
+    $ZOOKEEPER_HOME/bin/zkCli.sh -ser
