@@ -62,6 +62,7 @@ exec gosu huser bash -c "
 
 # For worker nodes (hostname starts with 'w')
 if [[ \"\$(hostname)\" =~ ^w.* ]]; then
+    sleep 200
     
     echo \"\$(date) Starting DataNode on worker node \$(hostname)...\"
     hdfs --daemon start datanode
@@ -125,6 +126,7 @@ if [ \"\$(hostname)\" == \"m1\" ]; then
     fi
 
 elif [ \"\$(hostname)\" == \"m2\" ] || [ \"\$(hostname)\" == \"m3\" ]; then
+    sleep 200
     # Start ZooKeeper first on all nodes
     echo \"\$(date) Starting ZooKeeper on \$(hostname)...\"
     zkServer.sh start
